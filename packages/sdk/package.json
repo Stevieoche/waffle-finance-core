@@ -58,6 +58,10 @@
     "./shared-utils": {
       "import": "./dist/shared-utils/index.js",
       "types": "./dist/shared-utils/index.d.ts"
+    },
+    "./request-trace": {
+      "import": "./dist/request-trace/index.js",
+      "types": "./dist/request-trace/index.d.ts"
     }
   },
   "files": [

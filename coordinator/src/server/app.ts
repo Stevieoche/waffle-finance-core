@@ -10,9 +10,11 @@ import { ordersRoutes } from "./routes/orders.js";
 import { secretsRoutes } from "./routes/secrets.js";
 import { quotesRoutes } from "./routes/quotes.js";
 import { adminRoutes } from "./routes/admin.js";
+import { resolversRoutes } from "./routes/resolvers.js";
 import type { OrderService } from "../services/order-service.js";
 import type { SecretService } from "../services/secret-service.js";
 import type { QuoteService } from "../services/quote-service.js";
+import type { ResolverLivenessService } from "../services/resolver-liveness.js";
 import type { ReconciliationStatus } from "../reconciliation/reconciler.js";
 import type { StaleCleanupResult } from "../services/stale-cleanup.js";
 import { requestIdMiddleware, REQUEST_ID_HEADER } from "./middleware/request-id.js";
@@ -26,6 +28,8 @@ export interface AppDeps {
   orders: OrderService;
   secrets: SecretService;
   quotes: QuoteService;
+  /** When provided, resolver liveness routes are mounted. */
+  resolverLiveness?: ResolverLivenessService;
   getReconciliationStatus?: () => ReconciliationStatus;
   getReadinessChecks?: ReadinessCheckProvider;
   /**
@@ -100,6 +104,11 @@ export function createApp(deps: AppDeps): Express {
   // quotes routes expose /api/quotes/eth-xlm, /api/quotes/eth-sol, and
   // /api/prices (the aggregated endpoint consumed by the BridgeForm).
   app.use("/api", quotesRoutes(deps.quotes));
+
+  // Resolver liveness routes — only mounted when the service is injected.
+  if (deps.resolverLiveness) {
+    app.use("/api", resolversRoutes(deps.resolverLiveness));
+  }
 
   // Admin maintenance endpoints — only mounted when the dependency callbacks
   // are injected (i.e. in production wiring via index.ts).  Omitting them in
