@@ -1,5 +1,7 @@
 import { createServer } from "node:http";
 import express from "express";
+import { privateKeyToAccount } from "viem/accounts";
+import { Keypair } from "@stellar/stellar-sdk";
 import { loadConfig } from "../config.js";
 import { validateResolverConfig, ConfigValidationError } from "../validation.js";
 import { getLogger } from "../logger.js";
@@ -8,6 +10,7 @@ import { SorobanListener } from "../listeners/soroban.js";
 import { Supervisor, FatalError } from "../supervisor.js";
 import { startResolverHealthServer } from "../health.js";
 import { metricsRouter } from "../routes/metrics.js";
+import { HeartbeatClient } from "../heartbeat.js";
 import {
   startTimeSeconds,
   ordersProcessedTotal,
@@ -53,9 +56,29 @@ export async function runCommand(): Promise<void> {
   const eth = new EthereumListener(cfg, log);
   const stellar = new SorobanListener(cfg, cfg.pollIntervalMs, log);
   const supervisor = new Supervisor({ log, maxRestarts: 5, restartDelayMs: 5_000 });
+
+  // Derive resolver addresses from validated key material so the heartbeat
+  // client can announce liveness to the coordinator.
+  const ethResolverAddress = cfg.ethereum.resolverPrivateKey
+    ? (() => { try { return privateKeyToAccount(cfg.ethereum.resolverPrivateKey).address; } catch { return null; } })()
+    : null;
+  const stellarResolverAddress = cfg.soroban.resolverSecret
+    ? (() => { try { return Keypair.fromSecret(cfg.soroban.resolverSecret).publicKey(); } catch { return null; } })()
+    : null;
+
+  const heartbeatClient = new HeartbeatClient({
+    coordinatorUrl: cfg.coordinatorUrl,
+    ethereumAddress: ethResolverAddress,
+    stellarAddress: stellarResolverAddress,
+    log,
+  });
+
   const healthPort = Number(process.env.RESOLVER_HEALTH_PORT ?? 3003);
   const healthServer = startResolverHealthServer({ cfg, supervisor }, healthPort);
   log.info({ port: healthPort }, "resolver health server listening");
+
+  // Start heartbeat — signals liveness to the coordinator periodically.
+  heartbeatClient.start();
 
   let shuttingDown = false;
 
@@ -65,6 +88,7 @@ export async function runCommand(): Promise<void> {
 
     log.info({ signal }, "shutting down");
     supervisor.stop();
+    heartbeatClient.stop();
 
     activeListeners.set({ chain: "http" }, 0);
 

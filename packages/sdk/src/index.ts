@@ -126,3 +126,21 @@ export {
 
 // Solana — normalised adapter
 export { SolanaHTLCAdapter } from "./solana/adapter.js";
+
+// Request trace utility (opt-in, safe-by-default)
+export {
+  REDACTED,
+  redactSecrets,
+  RequestTracer,
+  TracingHTLCAdapter,
+  serializeTrace,
+  deserializeTrace,
+  summarizeTrace,
+  TraceParseError,
+  type Redacted,
+  type TraceOperation,
+  type TraceOutcome,
+  type TraceStep,
+  type RequestTrace,
+  type TracingHTLCAdapterOptions,
+} from "./request-trace/index.js";
