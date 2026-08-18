@@ -6,3 +6,4 @@ export type {
   UseOrderSubscriptionOptions,
   UseOrderSubscriptionResult,
 } from './useOrderSubscription';
+export { useOrderStream } from './useOrderStream';

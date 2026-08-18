@@ -23,6 +23,14 @@ import { HistoryCache } from "./history-cache.js";
 import type { AuditRepository } from "../audit/audit-repo.js";
 import { buildOrderAuditEntry } from "../audit/audit-log.js";
 import { getRequestId } from "../request-context.js";
+import type { SseBroker } from "../sse/sse-broker.js";
+import {
+  buildOrderCreatedPayload,
+  buildOrderClaimedPayload,
+  buildOrderRefundedPayload,
+  buildSecretRevealedPayload,
+  buildStatusChangedPayload,
+} from "../sse/event-builders.js";
 
 // Re-exported so existing importers (routes, services barrel) keep working
 // while the schema itself now lives in the shared validation module.
@@ -63,14 +71,16 @@ function recordTransition(
 
 export class OrderService {
   private readonly historyCache: HistoryCache;
+  private readonly sseBroker?: SseBroker;
 
   constructor(
     private readonly repo: OrdersRepository,
     private readonly log: Logger,
-    options: { enableCache?: boolean; cacheTtlMs?: number; auditRepo?: AuditRepository } = {},
+    options: { enableCache?: boolean; cacheTtlMs?: number; auditRepo?: AuditRepository; sseBroker?: SseBroker } = {},
     private readonly auditRepo?: AuditRepository
   ) {
     this.auditRepo = options.auditRepo;
+    this.sseBroker = options.sseBroker;
     // Initialize cache if enabled (default: enabled)
     if (options.enableCache !== false) {
       this.historyCache = new HistoryCache(log.child({ component: 'history-cache' }), {
@@ -228,7 +238,13 @@ export class OrderService {
     // ── Observability ───────────────────────────────────────────────────
     recordTransition(order.direction, order.status, "src_locked", order.updatedAt);
     ordersTotal.inc({ status: "src_locked", direction: order.direction });
-    
+
+    // ── SSE broadcast ───────────────────────────────────────────────────
+    this.sseBroker?.broadcast(
+      input.publicId,
+      buildOrderCreatedPayload({ ...order, srcLockTx: input.txHash, srcLockBlock: input.blockNumber, srcTimelock: input.timelock }),
+    );
+
     // Invalidate cache for both addresses since order status changed
     this.historyCache.invalidateAddress(order.srcAddress);
     this.historyCache.invalidateAddress(order.dstAddress);
@@ -281,7 +297,20 @@ export class OrderService {
     // ── Observability ───────────────────────────────────────────────────
     recordTransition(order.direction, order.status, "dst_locked", order.updatedAt);
     ordersTotal.inc({ status: "dst_locked", direction: order.direction });
-    
+
+    // ── SSE broadcast ───────────────────────────────────────────────────
+    this.sseBroker?.broadcast(
+      input.publicId,
+      buildOrderClaimedPayload({
+        ...order,
+        status: "dst_locked",
+        dstLockTx: input.txHash,
+        dstLockBlock: input.blockNumber,
+        dstTimelock: input.timelock,
+        resolverAddress: input.resolver,
+      }),
+    );
+
     // Invalidate cache for both addresses since order status changed
     this.historyCache.invalidateAddress(order.srcAddress);
     this.historyCache.invalidateAddress(order.dstAddress);
@@ -323,7 +352,13 @@ export class OrderService {
     // ── Observability ───────────────────────────────────────────────────
     recordTransition(order.direction, order.status, "secret_revealed", order.updatedAt);
     ordersTotal.inc({ status: "secret_revealed", direction: order.direction });
-    
+
+    // ── SSE broadcast ───────────────────────────────────────────────────
+    this.sseBroker?.broadcast(
+      publicId,
+      buildSecretRevealedPayload(publicId, preimage, txHash),
+    );
+
     // Invalidate cache for both addresses since order status changed
     this.historyCache.invalidateAddress(order.srcAddress);
     this.historyCache.invalidateAddress(order.dstAddress);
@@ -358,7 +393,17 @@ export class OrderService {
     // ── Observability ───────────────────────────────────────────────────
     recordTransition(order.direction, order.status, status, order.updatedAt);
     ordersTotal.inc({ status, direction: order.direction });
-    
+
+    // ── SSE broadcast ───────────────────────────────────────────────────
+    if (status === "refunded") {
+      this.sseBroker?.broadcast(publicId, buildOrderRefundedPayload(publicId));
+    } else {
+      this.sseBroker?.broadcast(
+        publicId,
+        buildStatusChangedPayload(publicId, status, order.status),
+      );
+    }
+
     // Invalidate cache for both addresses since order status changed
     this.historyCache.invalidateAddress(order.srcAddress);
     this.historyCache.invalidateAddress(order.dstAddress);

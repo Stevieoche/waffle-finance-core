@@ -12,6 +12,8 @@ import { quotesRoutes } from "./routes/quotes.js";
 import { adminRoutes } from "./routes/admin.js";
 import { auditRoutes } from "./routes/audit.js";
 import { exportRoutes } from "./routes/export.js";
+import { sseRoutes } from "./routes/sse.js";
+import type { SseBroker } from "../sse/sse-broker.js";
 import { apiVersionMiddleware } from "./versioning.js";
 import type { OrderService } from "../services/order-service.js";
 import type { OrderExportService } from "../services/order-export.js";
@@ -57,6 +59,11 @@ export interface AppDeps {
    * Omitting this disables the endpoint (the route is not mounted).
    */
   runExpiry?: () => Promise<ExpiryResult>;
+  /**
+   * When provided, the SSE endpoint `GET /api/orders/:id/events` is mounted
+   * and OrderService transitions broadcast events to connected clients.
+   */
+  sseBroker?: SseBroker;
 }
 
 export function createApp(deps: AppDeps): Express {
@@ -148,6 +155,12 @@ export function createApp(deps: AppDeps): Express {
   // be gated behind authentication in production.
   if (deps.orderExport) {
     app.use("/api", exportRoutes(deps.orderExport, deps.log));
+  }
+
+  // SSE endpoint — only mounted when a SseBroker is injected.
+  // Provides GET /api/orders/:id/events for real-time push delivery.
+  if (deps.sseBroker) {
+    app.use("/api", sseRoutes(deps.orders, deps.sseBroker, deps.log));
   }
 
   // Final error handler - never leak a stack trace to clients.
