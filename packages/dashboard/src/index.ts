@@ -2,6 +2,19 @@ import { Router } from "express";
 import type { Request, Response } from "express";
 import axios from "axios";
 
+export { MetricsAggregator } from "./metrics-aggregator.js";
+export type {
+  OrderMetrics,
+  ReconciliationStatus as AggregatedReconciliationStatus,
+  ServiceHealthSummary,
+  MetricsAggregatorConfig,
+} from "./metrics-aggregator.js";
+export { AlertManager, DEFAULT_THRESHOLDS } from "./alerts.js";
+export type { Alert, AlertSeverity, AlertThresholds } from "./alerts.js";
+export { adminRoutes } from "./admin-routes.js";
+export type { AdminRoutesDeps } from "./admin-routes.js";
+export { requireAdminAuth, loadAdminKeys } from "./auth.js";
+
 /**
  * Service configuration for the health dashboard.
  * Each service has an endpoint URL and optional auth token.
