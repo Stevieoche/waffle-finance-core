@@ -238,7 +238,7 @@ export async function fetchSorobanRegistryInfo(cfg: ResolverConfig, log: Logger)
     simulateSorobanRead(server, publicKey, networkPassphrase, resolverRegistry, "min_stake", []),
   ]);
 
-  const minStake = BigInt(minStakeNative as bigint | number);
+  const minStake = toBigIntSafe(minStakeNative as bigint | number | string, "minStake");
 
   // `get()` returns Option<ResolverInfo> — scValToNative decodes None as
   // null/undefined and Some(x) as the plain decoded struct.
@@ -247,23 +247,54 @@ export async function fetchSorobanRegistryInfo(cfg: ResolverConfig, log: Logger)
   }
 
   const info = infoNative as {
-    stake: bigint;
-    total_slashed: bigint;
+    stake: bigint | number | string;
+    total_slashed: bigint | number | string;
     active: boolean;
-    unbonding_at?: bigint | null;
+    unbonding_at?: bigint | number | string | null;
   };
 
   return {
     registered: true,
     active: Boolean(info.active),
-    stake: BigInt(info.stake),
+    stake: toBigIntSafe(info.stake, "stake"),
     minStake,
-    totalSlashed: BigInt(info.total_slashed ?? 0n),
-    unbondingAt: info.unbonding_at != null ? BigInt(info.unbonding_at) : null,
+    totalSlashed: toBigIntSafe(info.total_slashed ?? 0n, "total_slashed"),
+    unbondingAt: info.unbonding_at != null ? toBigIntSafe(info.unbonding_at, "unbonding_at") : null,
   };
 }
 
-// ── Monitor ──────────────────────────────────────────────────────────────────
+// ── Safe bigint conversion ────────────────────────────────────────────────────
+
+/**
+ * Convert a value from on-chain decoding to bigint safely.
+ *
+ * Accepted inputs:
+ *   - bigint  : passed through unchanged.
+ *   - string  : passed directly to the BigInt() constructor (full precision).
+ *   - number  : only accepted when it is a finite, safe integer
+ *               (Number.isSafeInteger). A JS number outside the safe range
+ *               has already been rounded by IEEE-754, so converting it with
+ *               BigInt() would silently propagate the rounded — and therefore
+ *               wrong — value. Stake amounts and registration timestamps are
+ *               large enough (wei-denominated) to overflow Number.MAX_SAFE_INTEGER,
+ *               so we guard against that here.
+ *
+ * @throws {RangeError} when a numeric value is not a finite safe integer.
+ */
+export function toBigIntSafe(value: bigint | number | string, field: string): bigint {
+  if (typeof value === "bigint") return value;
+  if (typeof value === "string") return BigInt(value);
+  // typeof value === "number"
+  if (!Number.isFinite(value) || !Number.isSafeInteger(value)) {
+    throw new RangeError(
+      `${field} has an unsafe numeric value (${value}). ` +
+      "Use bigint or a string representation to avoid silent precision loss."
+    );
+  }
+  return BigInt(value);
+}
+
+
 
 /** Poll interval when none is supplied. Registration/stake status changes far less often than order events, so this is deliberately much coarser than the chain listeners' poll interval. */
 export const DEFAULT_STATUS_POLL_INTERVAL_MS = 60_000;

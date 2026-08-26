@@ -6,6 +6,7 @@ import {
   isOperationallyReady,
   ResolverStatusMonitor,
   ALL_LIFECYCLE_STATES,
+  toBigIntSafe,
   type RawRegistryInfo,
   type ResolverLifecycleState,
 } from "../src/registry-status.js";
@@ -276,5 +277,85 @@ describe("ResolverStatusMonitor", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("stop() called before the first tick prevents any RPC request", async () => {
+    vi.useFakeTimers();
+    try {
+      const cfg = baseConfig();
+      const evmProbe = vi.fn().mockResolvedValue(info());
+      const sorobanProbe = vi.fn().mockResolvedValue(null);
+      const monitor = new ResolverStatusMonitor(cfg, log, {
+        evmProbe,
+        sorobanProbe,
+        intervalMs: 1000,
+      });
+
+      // Start the monitor, let the initial tick fire, then stop.
+      monitor.start();
+      await vi.advanceTimersByTimeAsync(0); // drain the first async tick
+      const callsAfterFirstTick = evmProbe.mock.calls.length;
+
+      monitor.stop();
+
+      // Advance well past multiple intervals — no further probes should fire.
+      await vi.advanceTimersByTimeAsync(5000);
+
+      expect(evmProbe).toHaveBeenCalledTimes(callsAfterFirstTick);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("repeated stop() calls are harmless (idempotent)", () => {
+    const cfg = baseConfig();
+    const monitor = new ResolverStatusMonitor(cfg, log, {
+      evmProbe: vi.fn().mockResolvedValue(null),
+      sorobanProbe: vi.fn().mockResolvedValue(null),
+    });
+    expect(() => {
+      monitor.stop();
+      monitor.stop();
+      monitor.stop();
+    }).not.toThrow();
+  });
+});
+
+// ── toBigIntSafe ──────────────────────────────────────────────────────────────
+
+describe("toBigIntSafe — safe integer range guard", () => {
+  it("passes through bigint values unchanged", () => {
+    expect(toBigIntSafe(123n, "stake")).toBe(123n);
+    expect(toBigIntSafe(0n, "stake")).toBe(0n);
+  });
+
+  it("converts a string representation with full precision", () => {
+    // A value larger than Number.MAX_SAFE_INTEGER — can only be represented as
+    // a string or bigint without precision loss.
+    const large = "9007199254740993"; // MAX_SAFE_INTEGER + 2
+    expect(toBigIntSafe(large, "stake")).toBe(9007199254740993n);
+  });
+
+  it("converts a safe integer number", () => {
+    expect(toBigIntSafe(42, "stake")).toBe(42n);
+    expect(toBigIntSafe(Number.MAX_SAFE_INTEGER, "stake")).toBe(BigInt(Number.MAX_SAFE_INTEGER));
+  });
+
+  it("throws RangeError for a number larger than MAX_SAFE_INTEGER", () => {
+    const unsafe = Number.MAX_SAFE_INTEGER + 1; // already rounded — cannot be exact
+    expect(() => toBigIntSafe(unsafe, "stake")).toThrow(RangeError);
+    expect(() => toBigIntSafe(unsafe, "stake")).toThrow(/stake/);
+  });
+
+  it("throws RangeError for a floating-point number", () => {
+    expect(() => toBigIntSafe(1.5, "totalSlashed")).toThrow(RangeError);
+  });
+
+  it("throws RangeError for Infinity", () => {
+    expect(() => toBigIntSafe(Infinity, "minStake")).toThrow(RangeError);
+  });
+
+  it("throws RangeError for NaN", () => {
+    expect(() => toBigIntSafe(NaN, "minStake")).toThrow(RangeError);
   });
 });

@@ -15,6 +15,46 @@ const DEFAULTS: Required<Omit<RetryOptions, 'logger'>> & { onRetry: NonNullable<
   onRetry: () => {},
 };
 
+/**
+ * Normalize raw RetryOptions into a validated, fully-resolved set of options.
+ *
+ * Invariants enforced here:
+ *  - `maxAttempts` must be at least 1. Zero is ambiguous (does it mean "run
+ *    once with no retries" or "never run"?), so we treat it the same as 1 —
+ *    one attempt, no retries. This matches the principle of least surprise
+ *    for callers who pass 0 thinking they want a single attempt.
+ *  - `baseDelayMs` must be ≥ 0. A negative base delay would produce a
+ *    negative timeout argument passed to setTimeout, which Node.js converts
+ *    to 0 — creating an unintended busy-retry loop during an outage that
+ *    obscures the original failure and hammers downstream RPC endpoints.
+ *  - `jitterFactor` must be ≥ 0. A negative jitter value inverts the sign
+ *    of the jitter term, which can also produce a negative (or zero) delay
+ *    for the same reason.
+ */
+export function normalizeRetryOptions(
+  opts: RetryOptions
+): Required<Omit<RetryOptions, 'logger'>> & { onRetry: NonNullable<RetryOptions['onRetry']> } {
+  const merged = { ...DEFAULTS, ...opts };
+
+  if (merged.maxAttempts < 1) {
+    merged.maxAttempts = 1;
+  }
+
+  if (merged.baseDelayMs < 0) {
+    throw new RangeError(
+      `RetryOptions.baseDelayMs must be ≥ 0 (got ${merged.baseDelayMs})`
+    );
+  }
+
+  if (merged.jitterFactor < 0) {
+    throw new RangeError(
+      `RetryOptions.jitterFactor must be ≥ 0 (got ${merged.jitterFactor})`
+    );
+  }
+
+  return merged;
+}
+
 export class TransientError extends Error {
   constructor(message: string, public readonly cause?: unknown) {
     super(message);
@@ -37,10 +77,8 @@ export async function withRetry<T>(
   fn: () => Promise<T>,
   opts: RetryOptions = {}
 ): Promise<T> {
-  const { maxAttempts, baseDelayMs, maxDelayMs, jitterFactor, onRetry } = {
-    ...DEFAULTS,
-    ...opts,
-  };
+  const { maxAttempts, baseDelayMs, maxDelayMs, jitterFactor, onRetry } =
+    normalizeRetryOptions(opts);
 
   let lastError: Error | undefined;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
